@@ -6,6 +6,13 @@ type Context = { params: Promise<{ path: string[] }> };
 
 async function proxy(request: Request, { params }: Context): Promise<Response> {
   const { path } = await params;
+  // Prevent URL normalization from reaching private /internal/ routes.
+  if (!path.length || path.some(segment =>
+    segment === "." || segment === ".." ||
+    segment.includes("/") || segment.includes("\\") || segment.includes("%")
+  )) {
+    return Response.json({ detail: "Invalid API path" }, { status: 400 });
+  }
   return forwardToApi(request, `api/${path.map(encodeURIComponent).join("/")}`);
 }
 

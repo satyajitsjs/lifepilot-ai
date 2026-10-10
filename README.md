@@ -15,16 +15,21 @@
 - **Tools**: official Python MCP SDK **2.x**, stdio client calls plus optional localhost Streamable HTTP MCP server
 - **Integrations**: in-app reminders, calendar events + ICS exports, in-app messages; optional SMTP / Slack webhook
 
-## Vercel Services — review draft
+## Vercel Services (three-service preview architecture)
 
-The root `vercel.json` configures public Next.js `web` and an internal
-FastAPI `api` in a single Vercel project. The web service uses its injected
-`API_SERVICE_URL` service binding to proxy same-origin `/api/*` requests.
+The review branch configures Next.js `web` (public), FastAPI `api` (internal)
+and MCP Streamable HTTP `mcp` (internal) as **one Vercel project**.
 
-See [Vercel Services review and limitations](docs/VERCEL_SERVICES.md).
-**Not production-ready:** database persistence, background reminders, real
-authentication and MCP service delivery require follow-up work. Please
-confirm service names, public routing, and bindings before merging/deploying.
+- `web → api`: runtime `API_SERVICE_URL`
+- `api → mcp`: runtime `MCP_SERVICE_URL`
+- `mcp → api`: runtime `API_INTERNAL_URL` to execute only approved actions
+- Persistent PostgreSQL is required for Vercel (`DATABASE_URL`).
+- Reminders use a protected scheduler endpoint; no billed recurring cron is
+  created automatically.
+
+See [Vercel deployment architecture and outstanding validation](docs/VERCEL_SERVICES.md).
+The review branch is **not deployed, not merged and not production-ready**:
+real authentication and end-to-end Vercel/MCP integration still need checking.
 
 ## Getting started (Windows PowerShell)
 

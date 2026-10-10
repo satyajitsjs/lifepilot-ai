@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import hmac
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -28,7 +29,12 @@ async def reminder_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not DEMO_MODE and API_SECRET in ("development-only-change-me","replace-with-a-long-random-secret-before-deploying"):
+    if os.getenv("VERCEL"):
+        if len(API_SECRET) < 32 or API_SECRET in ("development-only-change-me", "replace-with-a-long-random-secret-before-deploying"):
+            raise RuntimeError("Set a strong random API_SECRET on Vercel")
+        if len(os.getenv("MCP_SERVICE_SECRET", "")) < 32:
+            raise RuntimeError("Set a distinct strong MCP_SERVICE_SECRET on Vercel")
+    elif not DEMO_MODE and API_SECRET in ("development-only-change-me", "replace-with-a-long-random-secret-before-deploying"):
         raise RuntimeError("Set a strong API_SECRET before disabling DEMO_MODE")
     db.initialize()
     # In-process recurring tasks cannot run reliably inside serverless functions.
@@ -194,6 +200,46 @@ async def approve(proposal_id:str,user_id:str=Depends(actor)):
         c.execute("UPDATE proposals SET status=?,outcomes=? WHERE id=?",(status,json.dumps(outcomes),proposal_id))
         db.event(c,user_id,"execution",f"{successes}/{len(outcomes)} actions completed",p["circle_id"])
     return {"id":proposal_id,"status":status,"executed":successes,"total":len(outcomes),"outcomes":outcomes}
+
+class InternalActionRequest(BaseModel):
+    tool: Literal["assign_task", "create_event", "create_reminder", "send_message"]
+    proposal_id: str
+    action_index: int = Field(ge=0, le=3)
+    auth_token: str
+
+
+@app.post("/internal/mcp/execute", include_in_schema=False)
+def execute_approved_mcp_action(
+    body: InternalActionRequest,
+    x_mcp_service_secret: str | None = Header(None),
+):
+    """MCP may only execute the exact approved action stored in PostgreSQL."""
+    expected = os.environ.get("MCP_SERVICE_SECRET", "")
+    if not expected or not x_mcp_service_secret or not hmac.compare_digest(expected, x_mcp_service_secret):
+        raise HTTPException(403, "Internal MCP service authorization failed")
+    user_id = verify_token(body.auth_token)
+    with db.connect() as c:
+        proposal = db.one(c, "SELECT * FROM proposals WHERE id=?", (body.proposal_id,))
+        if not proposal or proposal["actor_id"] != user_id or proposal["status"] not in ("executing", "partial"):
+            raise HTTPException(403, "An approved executing proposal is required")
+        actions = json.loads(proposal["actions"])
+        if body.action_index >= len(actions):
+            raise HTTPException(422, "Unknown action index")
+        selected = actions[body.action_index]
+        if selected["type"] != body.tool or selected["args"].get("circle_id") != proposal["circle_id"]:
+            raise HTTPException(403, "Tool does not match approved plan")
+        require_membership(c, user_id, proposal["circle_id"])
+    return local_execute(body.tool, selected["args"], body.auth_token, f"{body.proposal_id}:{body.action_index}")
+
+
+@app.get("/api/cron/reminders", include_in_schema=False)
+def scheduled_reminders(authorization: str | None = Header(None)):
+    """Invocation endpoint for a scheduler; no paid recurring cron enabled."""
+    secret = os.environ.get("CRON_SECRET", "")
+    if not secret or not authorization or not hmac.compare_digest(authorization, f"Bearer {secret}"):
+        raise HTTPException(403, "Scheduler authorization failed")
+    return {"delivered": fire_due_reminders()}
+
 
 @app.post("/api/circles",status_code=201)
 def create_circle(payload:CircleRequest,user_id:str=Depends(actor)):
