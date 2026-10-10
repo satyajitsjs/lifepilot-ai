@@ -18,8 +18,6 @@ services:
     build:
       context: .
       dockerfile: infra/Dockerfile.web
-      args:
-        API_BACKEND_URL: http://api:8000
     environment:
       API_BACKEND_URL: http://api:8000
     ports:
