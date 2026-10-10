@@ -6,4 +6,6 @@ COPY services/api /app/services/api
 COPY services/mcp-server /app/services/mcp-server
 ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app/services/api DATABASE_PATH=/data/lifepilot.db
 RUN mkdir -p /data
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8000
+# Supports Docker Compose default and hosts injecting PORT.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

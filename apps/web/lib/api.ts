@@ -11,7 +11,8 @@ export type Outcome = { action: string; label: string; ok: boolean; error?: stri
 export type Proposal = { id: string; prompt: string; circle_id: string; summary: string; actions: ProposedAction[]; outcomes: Outcome[]; status: string; mode: string; created_at?: string };
 export type Bootstrap = { user: Person; demo: boolean; circles: Circle[]; members: Person[]; tasks: Task[]; events: CalendarEvent[]; reminders: Reminder[]; notifications: Notification[]; activity: Activity[]; proposals: Proposal[]; connections: Record<string, string> };
 
-export const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+// Default to same-origin proxy; optional override for direct browser API access.
+export const API = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/+$/, "");
 
 export async function request<T>(path: string, token: string | null, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, {
