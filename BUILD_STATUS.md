@@ -1,21 +1,37 @@
-# Verification report — 10 October 2026
+# Verification report — Vercel Services review (11 October 2026)
 
-## Verified in this build environment
+## Verified in local implementation workspace
 
-- Python backend syntax compilation: **PASS**
-- Pytest API/workflow tests: **7 passed**
-- Authenticated FastAPI HTTP smoke test: **PASS** (health, demo login, bootstrap)
-- TypeScript/TSX **syntax transpilation**: **PASS** (4 files)
-- UI HTML/CSS desktop screenshot: **captured and inspected** (1440px)
-- UI HTML/CSS mobile screenshot: **captured and inspected** (390px, no horizontal overflow)
+- Python backend syntax compilation: **PASS** (`python -m compileall -q services`)
+- Pytest existing workflows and added service authorization tests:
+  **12 passed, 2 skipped** (`python -m pytest -q tests`)
+- New tests verify three private-service bindings and public exposure,
+  authorization before MCP action execution, rejection of forged actors/tools,
+  idempotent retries, protected scheduler endpoint, and PostgreSQL-only Vercel startup.
+- TypeScript/TSX syntax transpilation: **PASS** (8 non-declaration files)
+- `vercel.json` valid JSON; top-level public rewrite targets only `web`.
 
-## Requires validation on your machine
+## Not yet validated — do not claim full deployment success
 
-- `npm install && npm run build` / browser interactions in the real Next.js app: **not executed here** because package registry DNS is unavailable.
-- MCP SDK 2.x real stdio / Streamable HTTP round-trip: **not executed here** because MCP Python package is unavailable in this container (you already have it installed locally).
-- LangGraph actual `interrupt()` / `Command(resume=...)` execution: **not executed here** because LangGraph Python package is unavailable in this container.
-- NVIDIA Nemotron real API planning: **not executed** (no API key; deterministic demo plan exercised).
-- Gmail/Google Calendar OAuth: **not implemented**. In-app events, ICS calendar export, and SMTP/Slack opt-in available.
-- Public deployment and real OAuth: **not configured**.
+- No real Vercel build/deployment or `vercel dev -L` multi-service round trip.
+- No live managed PostgreSQL configured; SQL translation tests passed but
+  full initialization, concurrent writes and provider connection pooling remain untested.
+- The MCP SDK 2.x Streamable HTTP handshake, Vercel ASGI lifespan and
+  `api → mcp → api` service bindings have **not** been exercised against live services.
+- Optional real stdio MCP test and LangGraph SDK integration test were skipped
+  because the packages are unavailable in the local testing container.
+- No real NVIDIA API key, external calendar/OAuth or SMTP/Slack providers tested.
+- No recurring Vercel Cron schedule, paid plan or Vercel project was created.
 
-Optional pytest tests named `test_mcp_integration.py` and `test_langgraph_integration.py` will run automatically after the respective packages are installed in your local Python environment.
+## Known limitations
+
+- Demo login is insecure for public real-user use. It defaults to disabled
+  on Vercel; use explicit fake-data protected previews only.
+- PostgreSQL persisted proposals are authoritative, but the LangGraph
+  in-memory checkpoint history is not yet fully durable.
+- Missing production identity, robust schema migrations, database pooling review,
+  request throttling and full load/performance validation.
+- Reminder endpoint is protected but must be scheduled separately after confirming
+  desired frequency/cost.
+
+This is a **review-branch deployment implementation**, not a completed production deployment.

@@ -1,68 +1,82 @@
-# Architecture and safety boundaries
+# LifePilot Circles — architecture
+
+## Local development / Docker
+
+- Next.js 16 in `apps/web`, browser requests same-origin `/api/*`.
+- Next.js server gateway forwards to local FastAPI port 8000 or Docker
+  `http://api:8000` (via `API_BACKEND_URL`).
+- FastAPI backend creates tasks, circles, events, in-app reminders and messages.
+- SQLite remains the local demo database and existing tests use a temporary file.
+- Python SDK v2 local MCP over stdio; demo mode is deliberately insecure and
+  intended solely for non-personal fake data.
+
+## Vercel Services — review branch only
 
 ```text
-Next.js 16 frontend (apps/web)
-   |
-   | Bearer demo token over HTTP
-   v
-FastAPI (services/api/app/main.py)
-   |-- demo identity and circle membership
-   |-- agent.py: LangChain + NVIDIA Nemotron, or labelled offline deterministic planner
-   |-- approval_graph.py: LangGraph interrupt/checkpoint/resume
-   |-- proposals in SQLite to survive API restarts
-   |-- approval endpoint verifies actor + circle and marks proposal executing
-   v
-MCP Client (services/api/app/mcp_client.py)
-   |  stdio client spawns Python MCP server for each approved action
-   v
-MCPServer 2.x (services/mcp-server/server.py)
-   |-- assign_task
-   |-- create_event
-   |-- create_reminder
-   |-- send_message
-   v
-Tool domain service (services/api/app/actions.py)
-   |-- verifies signed actor token, circle membership and recipient membership
-   |-- unique idempotency keys
-   |-- SQLite persistence
-   |-- in-app notifications
-   |-- optional SMTP / Slack webhook
-   v
-FastAPI returns verified per-tool outcomes; UI refreshes live data.
+ Browser / user
+       |
+       v
+Vercel web service (Next.js)        PUBLIC /*
+       |
+       | API_SERVICE_URL runtime binding
+       v
+Vercel api service (FastAPI)        INTERNAL
+       |  LangChain/NVIDIA optional plan generator
+       |  PostgreSQL durable proposals + LangGraph interrupt/resume
+       |
+       | MCP_SERVICE_URL runtime binding (MCP HTTP)
+       v
+Vercel mcp service (MCPServer v2)  INTERNAL
+       |
+       | API_INTERNAL_URL runtime binding
+       | X-MCP-Service-Secret and signed actor token
+       v
+Vercel api (/internal/mcp/execute)
+       |
+       | matches type, actor, circle and index against approved DB proposal
+       v
+Managed PostgreSQL (DATABASE_URL)
 ```
 
-## Why no Postgres yet?
+The additional reverse `mcp → api` binding is necessary because the API
+owns the domain write logic and the database connection. MCP tools accept
+only a signed actor token and a persisted proposal ID/action index; they
+cannot invent or modify the action's parameters.
 
-A local SQLite database makes the hackathon demo trivially reproducible for both team members. Production deployment should migrate to PostgreSQL and use Alembic, especially for concurrent writes. The schema is in `db.py` so migration is straightforward, but it is **not implemented** here.
+## Approval safety / durability
 
-## Approval and durability
+- `/api/assistant/plan` persists a pending proposal and invokes LangGraph
+  `interrupt()`. No tool executes at this stage.
+- Approve transitions its PostgreSQL record to `executing` with an atomic
+  conditional update. Reject marks it `rejected`, no tool execution.
+- Tools fetch the original approved action from PostgreSQL through the
+  private internal callback, verify actor and circle permissions, and use
+  a per-action idempotency key for retry safety.
+- LangGraph `InMemorySaver` is still process-local. Persisted proposal state
+  permits reconstruction on another instance, but full cross-worker
+  checkpoint history is a future hardening task.
 
-LangGraph `interrupt()` pauses a thread. `InMemorySaver` preserves state inside the running API process. `proposals` DB records independently persist status and action definitions. If the API restarts before approval, `approval_graph.resume()` recreates the paused graph and then resumes it. Production should use a persistent LangGraph Postgres checkpointer to preserve the *whole* graph history and guarantee resume across workers.
+## Database / reminders
 
-The `proposals` row is changed from `pending` to `executing` using an atomic conditional update before execution, preventing duplicate approval requests. Every MCP action receives an idempotency key `<proposal-id>:<index>`. Tool tables store unique keys to prevent duplicate creations after a timeout. Partial errors are recorded in proposal outcomes.
+- Hosted API requires `DATABASE_URL` (psycopg PostgreSQL). Vercel runtime
+  refuses ephemeral SQLite. PostgreSQL init uses a transaction advisory lock
+  to serialize demo seeding. Replace startup DDL with migrations when shipping
+  production.
+- Serverless functions have no reliable continuous polling loop. An
+  authenticated `GET /api/cron/reminders` endpoint checks due tasks;
+  no recurring cron is enabled by default.
 
-## Security notes
+## Public access boundaries
 
-- API caller identity comes from an HMAC-signed expiring session token; user IDs from language model output are **never** trusted as actor identity.
-- Circle membership is checked on proposals, tool execution, and reads.
-- MCP runs through a locally launched stdio process for approved actions. The optional HTTP MCP server is bound to loopback in Compose and requires production OAuth or an auth proxy before internet exposure.
-- The demo login endpoint intentionally allows persona switching. **It is not real user authentication** and must be removed/replaced with OIDC/OAuth before production.
-- Never send private content to an LLM without informing users; API key, SMTP password and Slack webhook stay in server environment variables.
-- LangChain generates **proposals**, not actions. The backend validates actions and requires explicit approval before MCP calls.
+- The root Vercel rewrites route every public request to `web`, not `api`
+  or `mcp`. Next.js only proxies intended public `/api/*` calls.
+- `/internal/mcp/execute` is not publicly proxied and checks an independent
+  `MCP_SERVICE_SECRET`, signed actor identity, and an executing proposal.
+- `MCP_SERVICE_URL`, `API_INTERNAL_URL` and `API_SERVICE_URL` are
+  runtime service bindings, not manually configured URLs.
+- The demo-user login is not real authentication; on Vercel it defaults to
+  disabled. Add OIDC/OAuth before public use with real people and data.
 
-## Integration reality
-
-| Feature | What is actually implemented |
-|---|---|
-| Multi-user team & family circles | Seeded demo circles and membership-based task/event access |
-| Task assignment | Real persistent task records and in-app notifications |
-| Reminders | Persistent reminders + 30-second background polling, in-app delivery |
-| Calendar | Real in-app event records + downloadable `.ics` file, not Google Calendar OAuth |
-| Messaging | In-app delivery; optionally sends Slack webhook or SMTP email with credentials |
-| AI | LangChain `ChatOpenAI` against NVIDIA when key is set; clearly labelled deterministic demo planner without a key |
-| HITL | LangGraph `interrupt`, resume on approve/reject; DB statuses authoritative |
-| MCP | Official Python SDK v2 `MCPServer`, stdio execution, separate localhost-only Streamable HTTP server |
-
-## Known gaps before public production
-
-Real OAuth/OIDC, protected public MCP OAuth endpoint, multi-worker persistent checkpointing, PostgreSQL migrations, API rate limiting, personal calendar OAuth (e.g. Google), scheduled external email reminders, robust observability and a production deployment review. This is a hackathon-grade working MVP, **not** a production SaaS.
+See [VERCEL_SERVICES.md](VERCEL_SERVICES.md) for deployment requirements
+and [VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md) for the legacy alternative
+with an externally hosted API.
