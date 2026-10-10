@@ -16,6 +16,12 @@ async def execute(action:dict,auth_token:str,idempotency_key:str) -> dict:
         return local_exec(kind,action["args"],auth_token,idempotency_key)
     from mcp import Client, StdioServerParameters
     server_path=ROOT / "services" / "mcp-server" / "server.py"
+    if not server_path.is_file():
+        raise RuntimeError(
+            "MCP server is not packaged inside this Vercel API service. "
+            "Deploy a reviewed MCP transport, or explicitly set MCP_MODE=local "
+            "for an in-process non-MCP preview only."
+        )
     parameters=StdioServerParameters(command=sys.executable,args=[str(server_path)])
     async with Client(parameters) as client:
         result=await client.call_tool(TOOL_NAMES[kind],args)

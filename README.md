@@ -15,16 +15,16 @@
 - **Tools**: official Python MCP SDK **2.x**, stdio client calls plus optional localhost Streamable HTTP MCP server
 - **Integrations**: in-app reminders, calendar events + ICS exports, in-app messages; optional SMTP / Slack webhook
 
-## Deploy on Vercel (frontend)
+## Vercel Services — review draft
 
-Deploy the Next.js frontend on Vercel with **Root Directory = `apps/web`**
-and **`API_BACKEND_URL=https://your-hosted-api.example`** in server-side
-environment variables. The frontend calls same-origin `/api/*` and Next.js
-proxies to FastAPI. No `NEXT_PUBLIC_API_URL` is required.
+The root `vercel.json` configures public Next.js `web` and an internal
+FastAPI `api` in a single Vercel project. The web service uses its injected
+`API_SERVICE_URL` service binding to proxy same-origin `/api/*` requests.
 
-The current FastAPI service needs **persistent hosting** because it uses
-SQLite, a reminder polling process and MCP subprocess tools. See
-[the deployment guide](docs/VERCEL_DEPLOYMENT.md) before making the demo public.
+See [Vercel Services review and limitations](docs/VERCEL_SERVICES.md).
+**Not production-ready:** database persistence, background reminders, real
+authentication and MCP service delivery require follow-up work. Please
+confirm service names, public routing, and bindings before merging/deploying.
 
 ## Getting started (Windows PowerShell)
 
