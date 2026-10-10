@@ -1,6 +1,7 @@
 """SQLite MVP persistence. Replace with PostgreSQL in deployment; APIs keep the contract."""
 from __future__ import annotations
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -16,21 +17,71 @@ def uid() -> str:
     return str(uuid4())
 
 
+def postgres_sql(sql: str) -> str:
+    """Convert this app's fixed SQLite-style SQL placeholders for psycopg."""
+    statement = sql.replace("?", "%s")
+    if statement.lstrip().upper().startswith("INSERT OR IGNORE INTO"):
+        statement = statement.replace("INSERT OR IGNORE INTO", "INSERT INTO", 1)
+        statement = statement.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+    return statement
+
+
+class PostgresConnection:
+    """Minimal SQL interface shared by the existing domain modules."""
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, statement, params=()):
+        return self.connection.execute(postgres_sql(statement), params)
+
+    def executemany(self, statement, values):
+        with self.connection.cursor() as cursor:
+            return cursor.executemany(postgres_sql(statement), values)
+
+    def executescript(self, script):
+        # Only used with the application's trusted, fixed schema DDL.
+        for segment in script.split(";"):
+            statement = segment.strip()
+            if statement and not statement.upper().startswith("PRAGMA"):
+                self.execute(statement)
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
+
+
 @contextmanager
 def connect():
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DATABASE_PATH), timeout=20)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=20000")
+    """Use PostgreSQL for persistent hosting; SQLite for local development only."""
+    dsn = os.environ.get("DATABASE_URL", "").strip()
+    if dsn:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:
+            raise RuntimeError("Install psycopg[binary] for PostgreSQL") from exc
+        connection = PostgresConnection(psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10))
+    else:
+        if os.environ.get("VERCEL"):
+            raise RuntimeError("DATABASE_URL is required on Vercel; ephemeral SQLite is forbidden")
+        DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(str(DATABASE_PATH), timeout=20)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=20000")
     try:
-        yield conn
-        conn.commit()
+        yield connection
+        connection.commit()
     except Exception:
-        conn.rollback()
+        connection.rollback()
         raise
     finally:
-        conn.close()
+        connection.close()
 
 
 def row_dict(row):
@@ -54,6 +105,9 @@ def event(conn, actor_id: str, kind: str, text: str, circle_id: str | None = Non
 
 def initialize():
     with connect() as c:
+        # Serialize concurrent cold-start seeding on shared PostgreSQL.
+        if os.environ.get("DATABASE_URL"):
+            c.execute("SELECT pg_advisory_xact_lock(907, 2026)")
         c.executescript("""
         PRAGMA journal_mode=WAL;
         CREATE TABLE IF NOT EXISTS users (

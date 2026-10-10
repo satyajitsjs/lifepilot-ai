@@ -16,7 +16,28 @@
     "api": {
       "root": "services/api",
       "framework": "fastapi",
-      "entrypoint": "main:app"
+      "entrypoint": "main:app",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "mcp",
+          "format": "url",
+          "env": "MCP_SERVICE_URL"
+        }
+      ]
+    },
+    "mcp": {
+      "root": "services/mcp-server",
+      "framework": "python",
+      "entrypoint": "main:app",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "api",
+          "format": "url",
+          "env": "API_INTERNAL_URL"
+        }
+      ]
     }
   },
   "rewrites": [
