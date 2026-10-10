@@ -1,3 +1,7 @@
+> This describes the earlier **separate-hosting** design (Vercel frontend +
+> an external persistent FastAPI host). The new one-project Vercel Services
+> review is in [VERCEL_SERVICES.md](VERCEL_SERVICES.md).
+
 # Deploy LifePilot Circles with Vercel
 
 The Next.js frontend is ready for **Vercel**. The existing Python API requires

@@ -31,11 +31,15 @@ async def lifespan(app: FastAPI):
     if not DEMO_MODE and API_SECRET in ("development-only-change-me","replace-with-a-long-random-secret-before-deploying"):
         raise RuntimeError("Set a strong API_SECRET before disabling DEMO_MODE")
     db.initialize()
-    task=asyncio.create_task(reminder_loop())
-    yield
-    task.cancel()
-    try: await task
-    except asyncio.CancelledError: pass
+    # In-process recurring tasks cannot run reliably inside serverless functions.
+    task = None if os.getenv("VERCEL") else asyncio.create_task(reminder_loop())
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
 
 app=FastAPI(title="LifePilot Circles API",version="0.1.0",lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=[origin.strip() for origin in FRONTEND_ORIGIN.split(",")],allow_credentials=True,allow_methods=["GET","POST","PATCH"],allow_headers=["Authorization","Content-Type"])
