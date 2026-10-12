@@ -1,6 +1,6 @@
 # Voice controls in LifePilot Circles
 
-The AI Assistant now supports **browser microphone dictation** and **spoken plan previews**.
+The AI Assistant now supports **browser microphone dictation** and **spoken plan previews**. Browser speech recognition supports selectable English/Hindi locales when available, but the offline rule-based task planner primarily understands English commands; Hindi interpretation requires a capable configured AI model.
 
 ## Use
 1. Open AI Assistant.
